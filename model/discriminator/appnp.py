@@ -1,12 +1,9 @@
-import dgl.sparse as dglsp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from copy import deepcopy
 from tqdm import tqdm
-
-from .gcn import GCNTrainer
+from torch_geometric.nn import GCNConv, global_mean_pool
 
 class APPNP(nn.Module):
     def __init__(self,
@@ -27,27 +24,25 @@ class APPNP(nn.Module):
         self.lins.append(nn.Linear(hidden_size, out_size))
 
         self.dropout = dropout
-
         self.num_prop_layers = num_prop_layers
         self.alpha = alpha
 
-    def forward(self, A, H):
+    def forward(self, A, X):
         # Predict.
         for lin in self.lins[:-1]:
-            H = lin(H)
-            H = F.relu(H)
-            H = F.dropout(H, p=self.dropout, training=self.training)
-        H_local = self.lins[-1](H)
+            X = lin(X)
+            X = F.relu(X)
+            X = F.dropout(X, p=self.dropout, training=self.training)
+        H_local = self.lins[-1](X)
 
         # Propagate.
         H = H_local
         for _ in range(self.num_prop_layers):
-            A_drop = dglsp.val_like(
-                A, F.dropout(A.val, p=self.dropout, training=self.training))
-            H = A_drop @ H + self.alpha * H_local
+            H = torch.matmul(A, H) + self.alpha * H_local
+            H = F.dropout(H, p=self.dropout, training=self.training)
         return H
 
-class APPNPTrainer(GCNTrainer):
+class APPNPTrainer:
     def __init__(self, num_gnn_layers):
         hyper_space = {
             "lr": [3e-2, 1e-2, 3e-3],
@@ -65,10 +60,10 @@ class APPNPTrainer(GCNTrainer):
             "num_prop_layers",
             "hidden_size"]
 
-        super().__init__(num_gnn_layers=num_gnn_layers,
-                         hyper_space=hyper_space,
-                         search_priority_increasing=search_priority_increasing,
-                         patience=5)
+        self.num_gnn_layers = num_gnn_layers
+        self.hyper_space = hyper_space
+        self.search_priority_increasing = search_priority_increasing
+        self.patience = 5
 
     def fit_trial(self,
                   A,
@@ -89,7 +84,7 @@ class APPNPTrainer(GCNTrainer):
                       hidden_size=hidden_size,
                       dropout=dropout,
                       num_prop_layers=num_prop_layers,
-                      alpha=alpha).to(self.device)
+                      alpha=alpha).to('cuda')  # Ensure to send to the correct device
         loss_func = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -124,8 +119,8 @@ class APPNPTrainer(GCNTrainer):
         """
         Parameters
         ----------
-        A : dgl.sparse.SparseMatrix
-            Adjacency matrix.
+        A : torch.Tensor
+            Adjacency matrix in COO format.
         X : torch.Tensor of shape (|V|, D)
             Binary node features.
         Y : torch.Tensor of shape (|V|,)
@@ -137,6 +132,7 @@ class APPNPTrainer(GCNTrainer):
         val_mask : torch.Tensor of shape (|V|)
             Mask indicating validation nodes.
         """
+        # Assuming A is already in COO format for PyG
         A, X, Y = self.preprocess(A, X, Y)
 
         config_list = self.get_config_list()
@@ -177,6 +173,6 @@ class APPNPTrainer(GCNTrainer):
 
     def load_model(self, model_path):
         state_dict = torch.load(model_path)
-        model = APPNP(**state_dict["model_config"]).to(self.device)
+        model = APPNP(**state_dict["model_config"]).to('cuda')  # Ensure to send to the correct device
         model.load_state_dict(state_dict["model_state_dict"])
         self.model = model

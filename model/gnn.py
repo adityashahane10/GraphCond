@@ -37,7 +37,45 @@ class GNNLayer(nn.Module):
             nn.Dropout(dropout)
         )
 
-    def forward(self, A, h_X, h_Y, h_t):
+    # def forward(self, A, h_X, h_Y, h_t):
+    #     """
+    #     Parameters
+    #     ----------
+    #     A : dglsp.SparseMatrix
+    #         Adjacency matrix.
+    #     h_X : torch.Tensor of shape (|V|, hidden_X)
+    #         Hidden representations for the node attributes.
+    #     h_Y : torch.Tensor of shape (|V|, hidden_Y)
+    #         Hidden representations for the node label.
+    #     h_t : torch.Tensor of shape (|V|, hidden_t)
+    #         Hidden representations for the normalized time step.
+
+    #     Returns
+    #     -------
+    #     h_X : torch.Tensor of shape (|V|, hidden_X)
+    #         Updated hidden representations for the node attributes.
+    #     h_Y : torch.Tensor of shape (|V|, hidden_Y)
+    #         Updated hidden representations for the node label.
+    #     """
+    #     print("Shape of H_X:", h_X.shape)
+    #     print("Shape of H_y:", h_Y.shape)
+    #     h_aggr_X = A @ torch.cat([h_X, h_Y], dim=1)
+    #     h_aggr_Y = A @ h_Y
+
+    #     num_nodes = h_X.size(0)
+    #     h_t_expand = h_t.expand(num_nodes, -1)
+        
+    #     print("Shape of h_t_expand:", h_t_expand.shape)
+    #     print("Shape of h_aggr_X:", h_aggr_X.shape)
+    #     h_aggr_X = torch.cat([h_aggr_X, h_t_expand], dim=1)
+        
+
+    #     h_X = self.update_X(h_aggr_X)
+    #     h_Y = self.update_Y(h_aggr_Y)
+
+    #     return h_X, h_Y
+
+    def forward(self, A_t, h_X, h_Y, h_t):
         """
         Parameters
         ----------
@@ -57,17 +95,49 @@ class GNNLayer(nn.Module):
         h_Y : torch.Tensor of shape (|V|, hidden_Y)
             Updated hidden representations for the node label.
         """
-        h_aggr_X = A @ torch.cat([h_X, h_Y], dim=1)
-        h_aggr_Y = A @ h_Y
+        # Debugging prints to check shapes of inputs
+        # print("Shape of h_X:", h_X.shape)
+        # print("Shape of h_Y:", h_Y.shape)
 
+        # Concatenate h_X and h_Y along the feature dimension
+        h_concat = torch.cat([h_X, h_Y], dim=1)  # Shape: (|V|, hidden_X + hidden_Y)
+        # print("balle balle:", A_t.shape)
+        # Aggregate features using the adjacency matrix
+        h_aggr_X = A_t @ h_concat  # Shape: (|V|, hidden_X + hidden_Y)
+        h_aggr_Y = A_t @ h_Y      # Shape: (|V|, hidden_Y)
+        # print("Shape of h_aggr_X after aggregation:", h_aggr_X.shape)  # Expecting (2708, hidden_X + hidden_Y)
+        
+        
+        # Expand h_t to match the number of nodes
         num_nodes = h_X.size(0)
-        h_t_expand = h_t.expand(num_nodes, -1)
-        h_aggr_X = torch.cat([h_aggr_X, h_t_expand], dim=1)
+        h_t_expand = h_t.expand(num_nodes, -1)  # Shape: (|V|, hidden_t)
+        
+        # Check if shapes are correct before concatenation
+        # if h_aggr_X.size(0) != h_t_expand.size(0):
+        #    raise ValueError(f"Size mismatch: h_aggr_X has {h_aggr_X.size(0)} nodes, but h_t_expand has {h_t_expand.size(0)} nodes.")
+    
 
+
+        
+
+        # Debugging prints for shapes after aggregation and expansion
+        # print("Shape of h_t_expand:", h_t_expand.shape)
+        # print("Shape of h_aggr_X before concatenation:", h_aggr_X.shape)
+
+        # Ensure h_aggr_X is 2D and concatenate h_t_expand
+        if h_aggr_X.dim() == 1:
+            h_aggr_X = h_aggr_X.unsqueeze(1)  # Reshape to (|V|, 1)
+
+        h_aggr_X = torch.cat([h_aggr_X, h_t_expand], dim=1)  # Shape: (|V|, hidden_X + hidden_Y + hidden_t)
+
+        # Update node features using the respective update functions
         h_X = self.update_X(h_aggr_X)
         h_Y = self.update_Y(h_aggr_Y)
 
         return h_X, h_Y
+
+
+
 
 class GNNTower(nn.Module):
     """Graph Neural Network (GNN) / Message Passing Neural Network (MPNN).

@@ -1,4 +1,4 @@
-import dgl
+# import dgl
 import numpy as np
 import pydantic
 import random
@@ -95,4 +95,4 @@ def set_seed(seed=0):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    dgl.seed(seed)
+    # dgl.seed(seed)

@@ -1,4 +1,6 @@
-import dgl.sparse as dglsp
+# import dgl.sparse as dglsp
+import numpy as np
+from scipy.sparse import coo_matrix, diags
 import numpy as np
 import torch
 import torch.nn as nn
@@ -63,7 +65,10 @@ class MarginalTransition(nn.Module):
             Transition matrix for corrupting graph structure at time step t.
         """
         Q_bar_t_E = alpha_bar_t * self.I_E + (1 - alpha_bar_t) * self.m_E
-
+        
+        # print("I shape", (self.I_E).shape)
+        # print("marginal of A", (self.m_E).shape)
+        # print("Q_A shape:", Q_bar_t_E.shape)
         return Q_bar_t_E
 
     def get_Q_bar_X(self, alpha_bar_t):
@@ -80,6 +85,8 @@ class MarginalTransition(nn.Module):
             Transition matrix for corrupting node attributes at time step t.
         """
         Q_bar_t_X = alpha_bar_t * self.I_X + (1 - alpha_bar_t) * self.m_X
+        # print("marginal of X", (self.m_X).shape)
+        # print("Q_Xf shape:", Q_bar_t_X.shape)
 
         return Q_bar_t_X
 
@@ -251,8 +258,21 @@ class BaseModel(nn.Module):
         # Row normalization.
         edges_t = E_t.nonzero().T
         num_nodes = E_t.size(0)
-        A_t = dglsp.spmatrix(edges_t, shape=(num_nodes, num_nodes))
-        D_t = dglsp.diag(A_t.sum(1)) ** -1
+        # A_t = dglsp.spmatrix(edges_t, shape=(num_nodes, num_nodes))
+        edges_t = torch.tensor(edges_t)  # Convert edges_t to a tensor
+        row = edges_t[0]
+        col = edges_t[1]
+
+        # Create a sparse matrix A_t
+        A_t = torch.sparse.FloatTensor(torch.stack([row, col]), torch.ones(row.size(0)), (num_nodes, num_nodes))
+        # print("A shape:", A_t.shape)
+        # D_t = dglsp.diag(A_t.sum(1)) ** -1
+        # Compute the degree matrix D_t
+        D_t = torch.sparse.sum(A_t, dim=1).to_dense()  # Sum along rows to get the degree
+        D_t = D_t.pow(-1)  # Inverse of the degree
+        D_t = torch.diag(D_t)  # Convert to diagonal matrix
+        # print("______________________________")
+        # print("Inside this:", D_t.shape)
         return D_t @ A_t
 
     def denoise_match_Z(self,
@@ -488,6 +508,7 @@ class LossX(nn.Module):
         self.num_attrs_X = num_attrs_X
         self.num_classes_X = num_classes_X
 
+
     def forward(self, true_X, logit_X):
         """
         Parameters
@@ -641,6 +662,7 @@ class ModelSync(BaseModel):
         """
         t_float, X_t_one_hot, E_t = self.apply_noise(X_one_hot_3d, E_one_hot, t)
         A_t = self.get_adj(E_t)
+        
         logit_X, logit_E = self.graph_encoder(t_float,
                                               X_t_one_hot,
                                               Y,
@@ -1079,6 +1101,7 @@ class ModelAsync(BaseModel):
         t_float_X, X_t_one_hot = self.apply_noise_X(X_one_hot_3d, t_X)
         t_float_E, E_t = self.apply_noise_E(E_one_hot, t_E)
         A_t = self.get_adj(E_t)
+        
         logit_X, logit_E = self.graph_encoder(t_float_X,
                                               t_float_E,
                                               X_t_one_hot,

@@ -1,3 +1,6 @@
+import os
+os.environ["WANDB_MODE"] = "dryrun"
+
 import numpy as np
 import os
 import pandas as pd
@@ -26,12 +29,15 @@ def main(args):
         name=f"T{T}",
         config=config_df.to_dict(orient='records')[0])
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
 
-    g = load_dataset(args.dataset)
-    X_one_hot_3d, Y, E_one_hot,\
-        X_marginal, Y_marginal, E_marginal, X_cond_Y_marginals = preprocess(g)
+    data, dataset = load_dataset(args.dataset)
+    X_one_hot_3d, Y, E, E_one_hot,\
+        X_marginal, Y_marginal, E_marginal, X_cond_Y_marginals = preprocess(data, dataset)
+    
 
+
+    # print(E.shape)
     X_one_hot_3d = X_one_hot_3d.to(device)
     Y = Y.to(device)
     E_one_hot = E_one_hot.to(device)
@@ -40,7 +46,8 @@ def main(args):
     Y_marginal = Y_marginal.to(device)
     E_marginal = E_marginal.to(device)
 
-    N = g.num_nodes()
+    N = dataset.data.num_nodes
+    # print("Line 49")
     dst, src = torch.triu_indices(N, N, offset=1, device=device)
     # (|E|, 2), |E| for number of edges
     edge_index = torch.stack([dst, src], dim=1)
@@ -95,6 +102,7 @@ def main(args):
             batch_edge_index = batch_edge_index.to(device)
             # (B), (B)
             batch_dst, batch_src = batch_edge_index.T
+
             loss_X, loss_E = model.log_p_t(X_one_hot_3d,
                                            E_one_hot,
                                            Y,
