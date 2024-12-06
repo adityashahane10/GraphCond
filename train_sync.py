@@ -32,15 +32,29 @@ def main(args):
     device = torch.device('cpu')
 
     data, dataset = load_dataset(args.dataset)
-    X_one_hot_3d, Y, E, E_one_hot,\
+    X, X_one_hot_3d, Y, E, E_one_hot,\
         X_marginal, Y_marginal, E_marginal, X_cond_Y_marginals = preprocess(data, dataset)
+    
+
+    
     
 
 
     # print(E.shape)
+    X = X.to(device)
     X_one_hot_3d = X_one_hot_3d.to(device)
     Y = Y.to(device)
     E_one_hot = E_one_hot.to(device)
+    # print(E.shape)
+    # print(type(E))
+    # print(E_one_hot.shape)
+    # print(type(E_one_hot))
+    
+
+
+    
+
+   
 
     X_marginal = X_marginal.to(device)
     Y_marginal = Y_marginal.to(device)
@@ -109,7 +123,15 @@ def main(args):
                                            batch_src,
                                            batch_dst,
                                            E_one_hot[batch_dst, batch_src])
-            loss = loss_X + loss_E
+            
+            loss_X_c = model.log_p_c_t(X_one_hot_3d,
+                                           E_one_hot,
+                                           Y,
+                                           batch_src,
+                                           batch_dst,
+                                           E_one_hot[batch_dst, batch_src])
+            
+            loss = loss_X + loss_E + loss_X_c
 
             optimizer_X.zero_grad()
             optimizer_E.zero_grad()

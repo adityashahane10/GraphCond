@@ -109,7 +109,7 @@ def preprocess(data, dataset):
     # (F, C, 2)
     X_cond_Y_marginals = torch.stack(X_cond_Y_marginals, dim=1)
 
-    return X_one_hot, Y, E, E_one_hot, X_marginal, Y_marginal, E_marginal, X_cond_Y_marginals
+    return X, X_one_hot, Y, E, E_one_hot, X_marginal, Y_marginal, E_marginal, X_cond_Y_marginals
 # print("Exiting Data.py")
 # # Example usage
 # data, dataset = load_dataset("cora")

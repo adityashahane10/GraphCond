@@ -534,6 +534,66 @@ class LossX(nn.Module):
         loss_X = F.cross_entropy(logit_X, true_X)
 
         return loss_X
+    
+
+
+class UpperTriangleFeatureLoss(nn.Module):
+    def __init__(self):
+        super(UpperTriangleFeatureLoss, self).__init__()
+
+    def forward(self, A, X_original, X_predicted):
+        """
+        Compute the loss for upper triangular AijXiXj - AijXi(pred)Xj(pred).
+
+        Parameters
+        ----------
+        A : torch.Tensor of shape (N, N)
+            Adjacency matrix.
+        X_original : torch.Tensor of shape (N, F, 2)
+            Original features of nodes.
+        X_predicted : torch.Tensor of shape (N, F, 2)
+            Predicted features of nodes.
+
+        Returns
+        -------
+        loss : torch.Tensor
+            Scalar loss computed as ||AijXiXj - AijXi(pred)Xj(pred)||^2.
+        """
+
+         # Ensure dimensions align
+        F, N, _ = X_original.shape  # Shape: (F, N, 2)
+        X_original = X_original.permute(1, 0, 2)  # Reshape to (N, F, 2) to match predicted shape
+        # Create an upper triangular mask
+        upper_triangle_mask = torch.triu(torch.ones(A.shape, dtype=torch.bool), diagonal=1)
+
+        # Combine mask with adjacency matrix to get valid edges
+        valid_edges_mask = upper_triangle_mask & (A == 1)  # Shape: (N, N)
+
+        # Get indices of valid edges
+        valid_indices = torch.nonzero(valid_edges_mask, as_tuple=True)  # Indices of (i, j) where Aij = 1
+
+
+
+        # Extract the relevant node features for the upper triangle pairs
+        Xi_original = X_original[valid_indices[0]]  # Shape: (M, F, 2)
+        Xj_original = X_original[valid_indices[1]]  # Shape: (M, F, 2)
+        Xi_predicted = X_predicted[valid_indices[0]]  # Shape: (M, F, 2)
+        Xj_predicted = X_predicted[valid_indices[1]]  # Shape: (M, F, 2)
+
+        # Compute the pairwise products XiXj and Xi(pred)Xj(pred) only for the upper triangle
+        pairwise_original = Xi_original * Xj_original  # Shape: (M, F, 2)
+        pairwise_predicted = Xi_predicted * Xj_predicted  # Shape: (M, F, 2)
+
+        # Compute AijXiXj and AijXi(pred)Xj(pred)
+        Aij = A[valid_indices[0], valid_indices[1]].unsqueeze(-1).unsqueeze(-1)  # Shape: (M, 1, 1)
+        Aij_XiXj = Aij * pairwise_original  # Shape: (M, F, 2)
+        Aij_XiXj_pred = Aij * pairwise_predicted  # Shape: (M, F, 2)
+
+        # Compute L2 norm of the difference
+        loss = torch.norm(Aij_XiXj - Aij_XiXj_pred, p=2) ** 2
+        return loss
+
+
 
 class ModelSync(BaseModel):
     """
@@ -576,6 +636,7 @@ class ModelSync(BaseModel):
                                  gnn_E_config=gnn_E_config)
 
         self.loss_X = LossX(self.num_attrs_X, self.num_classes_X)
+        
 
     def apply_noise(self, X_one_hot_3d, E_one_hot, t=None):
         """Corrupt G and sample G^t.
@@ -663,17 +724,81 @@ class ModelSync(BaseModel):
         t_float, X_t_one_hot, E_t = self.apply_noise(X_one_hot_3d, E_one_hot, t)
         A_t = self.get_adj(E_t)
         
+
+
+
+        
         logit_X, logit_E = self.graph_encoder(t_float,
                                               X_t_one_hot,
                                               Y,
                                               A_t,
                                               batch_src,
                                               batch_dst)
-
+        
+        # print("___________________")
+        # print(X_one_hot_3d.shape)
+        # print(logit_X.shape)
+        # print(logit_E.shape)
+        # print("___________________")
         loss_X = self.loss_X(X_one_hot_3d, logit_X)
         loss_E = self.loss_E(batch_E_one_hot, logit_E)
 
         return loss_X, loss_E
+    
+    def log_p_c_t(self,
+                X_one_hot_3d,
+                E_one_hot,
+                Y,
+                batch_src,
+                batch_dst,
+                batch_E_one_hot,
+                t=None):
+        """Predict and compute log p(c | G, Y, t).
+
+        Parameters
+        ----------
+        X_one_hot_3d : torch.Tensor of shape (F, |V|, 2)
+            X_one_hot_3d[f, :, :] is the one-hot encoding of the f-th node attribute
+            in the real graph.
+        E_one_hot : torch.Tensor of shape (|V|, |V|, 2)
+            - E_one_hot[:, :, 0] indicates the absence of an edge in the real graph.
+            - E_one_hot[:, :, 1] is the adjacency matrix of the real graph.
+        Y : torch.Tensor of shape (|V|)
+            Categorical node labels of the real graph.
+        batch_src : torch.LongTensor of shape (B)
+            Source node IDs for a batch of candidate edges (node pairs).
+        batch_dst : torch.LongTensor of shape (B)
+            Destination node IDs for a batch of candidate edges (node pairs).
+        batch_E_one_hot : torch.Tensor of shape (B, 2)
+            E_one_hot[batch_dst, batch_src].
+        t : torch.LongTensor of shape (1), optional
+            If specified, a time step will be enforced rather than sampled.
+
+        Returns
+        -------
+        loss_X_c : torch.Tensor
+            Scalar representing the local topology loss for node attributes.
+        loss_E_c : torch.Tensor
+            Scalar representing the global topology loss for edge existence.
+        """
+        t_float, X_t_one_hot, E_t = self.apply_noise(X_one_hot_3d, E_one_hot, t)
+        A_t = self.get_adj(E_t)
+  
+        logit_X, logit_E = self.graph_encoder(t_float,
+                                              X_t_one_hot,
+                                              Y,
+                                              A_t,
+                                              batch_src,
+                                              batch_dst)
+        
+
+        # print(X_one_hot_3d.shape)
+        # print(logit_X.shape)
+        local_topology = UpperTriangleFeatureLoss()
+        loss_X_c = local_topology(A_t, X_one_hot_3d, logit_X)
+        # loss_E_c = self.loss_E_c(batch_E_one_hot, logit_E)
+
+        return loss_X_c
 
     def denoise_match_X(self,
                         t_float,
@@ -980,6 +1105,7 @@ class ModelAsync(BaseModel):
                                       gnn_E_config=gnn_E_config)
 
         self.loss_X = LossX(self.num_attrs_X, self.num_classes_X)
+        self.loss_X_c = UpperTriangleFeatureLoss(self.num_attrs_X, self.num_classes_X)
 
     def apply_noise_X(self, X_one_hot_3d, t=None):
         """Corrupt X and sample X^t.
